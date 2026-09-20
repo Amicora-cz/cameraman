@@ -1,0 +1,9 @@
+{
+  "name": "cameraman",
+  "description": "Record a narrated, subtitled screencast of a running web app by driving a real browser from a scenario file.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "homepage": "https://github.com/Amicora-cz/cameraman",
+  "repository": "https://github.com/Amicora-cz/cameraman",
+  "keywords": ["video", "screencast", "demo", "app-review", "playwright", "skill"]
+}

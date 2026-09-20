@@ -1,0 +1,24 @@
+{
+  "name": "cameraman",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Scenarios as data, one command from click-through to a narrated, subtitled video.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "cameraman": "tsx skills/cameraman/engine/cli.ts",
+    "demo:serve": "node skills/cameraman/demo/serve.mjs",
+    "typecheck": "tsc --noEmit",
+    "check": "node scripts/check-skill.mjs && tsc --noEmit"
+  },
+  "dependencies": {
+    "playwright-core": "^1.56.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
