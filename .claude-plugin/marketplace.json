@@ -1,0 +1,12 @@
+{
+  "name": "cameraman",
+  "description": "Scenarios as data, one command from click-through to a narrated, subtitled video — built for the videos you have to re-shoot.",
+  "owner": { "name": "Amicora", "url": "https://github.com/Amicora-cz" },
+  "plugins": [
+    {
+      "name": "cameraman",
+      "source": "./",
+      "description": "Record a narrated, subtitled screencast of a running web app by driving a real browser from a scenario file."
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+# Symlinks — never subject to text/EOL normalization
+.agents/skills/cameraman -text
+.claude/skills/cameraman -text
+.opencode/skills/cameraman -text

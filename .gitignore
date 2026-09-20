@@ -1,0 +1,6 @@
+node_modules/
+# Natočené take: videa, zvuk, mezisoubory.
+cameraman-output/
+# Credentials. Vzor je v .env.cameraman.example.
+.env.cameraman
+*.log

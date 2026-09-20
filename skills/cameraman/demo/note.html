@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme Notes — New note</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header><div class="logo"></div><h1>Acme Notes</h1></header>
+<main>
+  <h2>New note</h2>
+  <p class="sub">Two fields and a button — enough to exercise typing and a state change.</p>
+
+  <div class="card">
+    <div class="field">
+      <label for="title">Title</label>
+      <input id="title" data-testid="note-title" placeholder="What is this about?">
+    </div>
+    <div class="field">
+      <label for="body">Body</label>
+      <textarea id="body" data-testid="note-body" rows="5" placeholder="Write it down…"></textarea>
+    </div>
+    <div class="row">
+      <a href="/">Back to dashboard</a>
+      <button data-testid="save-note" id="save">Save note</button>
+    </div>
+    <div class="ok" data-testid="save-confirmation" id="ok" hidden>Note saved to your notebook.</div>
+  </div>
+</main>
+<script src="/app.js"></script>
+<script>
+  document.getElementById('save').addEventListener('click', () => {
+    const title = document.getElementById('title').value.trim() || 'Untitled note';
+    const state = window.acmeDemo.load();
+    state.notes.unshift({ title, when: new Date().toLocaleTimeString('en-GB') });
+    window.acmeDemo.save(state);
+    document.getElementById('ok').hidden = false;
+  });
+</script>
+</body>
+</html>
