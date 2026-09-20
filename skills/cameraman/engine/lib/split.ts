@@ -13,6 +13,7 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { ffmpegBin } from "./ffmpeg";
 
 const run = promisify(execFile);
 
@@ -25,7 +26,7 @@ export async function detectSilences(
   minDurationSec = 0.22,
 ): Promise<Silence[]> {
   const { stderr } = await run(
-    "ffmpeg",
+    ffmpegBin(),
     ["-hide_banner", "-nostats", "-i", file,
      "-af", `silencedetect=noise=${noiseDb}dB:d=${minDurationSec}`, "-f", "null", "-"],
     { maxBuffer: 32 * 1024 * 1024 },

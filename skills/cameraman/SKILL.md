@@ -66,13 +66,17 @@ Run the engine with `npx tsx <skill-dir>/engine/cli.ts <command>`.
 
 Check, and stop on the first failure rather than discovering it mid-take:
 
-- `ffmpeg` and `ffprobe` on PATH
-- a pointer tool: `xdotool` (Linux) · `cliclick` (macOS) · PowerShell (Windows)
+- `ffmpeg` and `ffprobe` — on PATH, or `FFMPEG_PATH`/`FFPROBE_PATH`, or the
+  bundled fallback npm unpacked. The engine resolves them in that order, so
+  this fails preflight only when all three miss; report which source it found.
+- a pointer tool: `xdotool` (Linux) · `cliclick` (macOS) · PowerShell
+  (Windows). No npm package supplies these — they are a real system install.
 - `playwright-core` resolvable from `<skill-dir>`. `/plugin install` runs
-  `npm install` for you, so a marketplace install already has it; a
-  `~/.claude/skills/` copy and a bare clone do not. Recording then needs one
-  `npm install` in `<plugin-root>` (the directory holding `package.json`, two
-  levels above `<skill-dir>`). `list`, `voice` and `assemble` run either way.
+  `npm install` for you, so a marketplace install already has it and the
+  ffmpeg fallback too; a `~/.claude/skills/` copy and a bare clone have
+  neither. Recording then needs one `npm install` in `<plugin-root>` (the
+  directory holding `package.json`, two levels above `<skill-dir>`). `list`,
+  `voice` and `assemble` run either way.
 - a **real** Chrome started by the human with `--remote-debugging-port=9222`
   (never launched by the agent — see recording.md for why)
 - the target URL answers, and is not on the scenario's `forbidHosts`

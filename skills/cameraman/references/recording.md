@@ -5,10 +5,25 @@
 | | |
 |---|---|
 | Node | ≥ 22 — the OBS client uses the global `WebSocket` |
-| ffmpeg + ffprobe | ≥ 6 |
+| ffmpeg + ffprobe | ≥ 6 on PATH, or the bundled fallback — see below |
 | Chrome | a **real** one, not a bundled Chromium |
 | cursor | Linux `xdotool` · macOS `cliclick` · Windows PowerShell |
 | OBS Studio | ≥ 30.2, only for `--backend obs`; on Linux `x11grab` needs nothing |
+
+### Which ffmpeg gets used
+
+Per tool, in order: `FFMPEG_PATH` / `FFPROBE_PATH`, then PATH, then the copy
+npm unpacked into `node_modules`. PATH wins over the bundle deliberately — it
+is the newer build and the one the operator chose.
+
+The bundle (`@ffmpeg-installer/ffmpeg`, `@ffprobe-installer/ffprobe`) is an
+optionalDependency, so an unsupported platform or a blocked registry leaves the
+install standing with PATH as the only source. It exists so a machine with no
+ffmpeg records instead of failing preflight; it is **not** the recommended
+build. It ships ffmpeg 4.1 and ffprobe 5.2, below the ≥ 6 above — verified to
+carry libx264, aac, `subtitles` (libass), `silencedetect`, the concat demuxer
+and `x11grab`, which is the whole pipeline, but install a current ffmpeg where
+you can.
 
 ## The browser is started by a human
 

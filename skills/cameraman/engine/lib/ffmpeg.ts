@@ -1,17 +1,79 @@
-/** Thin wrappers over ffmpeg/ffprobe. No npm dependency — the binaries are called. */
-import { execFile } from "node:child_process";
+/**
+ * Thin wrappers over ffmpeg/ffprobe, and the one place that decides which
+ * binary they are.
+ *
+ * Resolution order, per tool: `FFMPEG_PATH`/`FFPROBE_PATH` → PATH → the copy
+ * npm put in `node_modules`. PATH wins over the bundled build on purpose: it
+ * is the newer one and the one the operator chose. The bundle is the floor, so
+ * that a machine with no ffmpeg still records instead of failing preflight.
+ *
+ * The bundle is an optionalDependency — an unsupported platform or a blocked
+ * registry leaves the install standing, with PATH as the only source.
+ */
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
 
+export type ToolSource = "override" | "path" | "bundled";
+export type ResolvedTool = { bin: string; source: ToolSource };
+
+function onPath(tool: string): boolean {
+  try {
+    execFileSync(tool, ["-version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** `require` the installer package and hand back the binary it unpacked. */
+function bundledBin(spec: string): string | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require(spec) as { path?: string } | undefined;
+    return mod?.path ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveTool(tool: "ffmpeg" | "ffprobe", installer: string): ResolvedTool {
+  const override = process.env[tool === "ffmpeg" ? "FFMPEG_PATH" : "FFPROBE_PATH"];
+  if (override) return { bin: override, source: "override" };
+  if (onPath(tool)) return { bin: tool, source: "path" };
+  const bundled = bundledBin(installer);
+  if (bundled) return { bin: bundled, source: "bundled" };
+  throw new Error(
+    `${tool} is missing. Either install ffmpeg (apt/brew/winget), or run ` +
+      `\`npm install\` in the cameraman directory to get the bundled build, ` +
+      `or point ${tool === "ffmpeg" ? "FFMPEG_PATH" : "FFPROBE_PATH"} at one.`,
+  );
+}
+
+// Probing the filesystem once per process is enough; the answer cannot change
+// mid-take, and `detectSilences` alone would otherwise re-probe per shot.
+let ffmpegTool: ResolvedTool | null = null;
+let ffprobeTool: ResolvedTool | null = null;
+
+export function ffmpegBin(): string {
+  ffmpegTool ??= resolveTool("ffmpeg", "@ffmpeg-installer/ffmpeg");
+  return ffmpegTool.bin;
+}
+
+export function ffprobeBin(): string {
+  ffprobeTool ??= resolveTool("ffprobe", "@ffprobe-installer/ffprobe");
+  return ffprobeTool.bin;
+}
+
 export async function ffmpeg(args: string[]): Promise<void> {
-  await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...args], {
+  await run(ffmpegBin(), ["-hide_banner", "-loglevel", "error", "-y", ...args], {
     maxBuffer: 64 * 1024 * 1024,
   });
 }
 
 export async function durationSec(file: string): Promise<number> {
-  const { stdout } = await run("ffprobe", [
+  const { stdout } = await run(ffprobeBin(), [
     "-v", "error",
     "-show_entries", "format=duration",
     "-of", "default=noprint_wrappers=1:nokey=1",
@@ -24,7 +86,7 @@ export async function durationSec(file: string): Promise<number> {
 
 /** Read stream properties of the first video stream, comma separated. */
 export async function probeStream(file: string, entries: string): Promise<string> {
-  const { stdout } = await run("ffprobe", [
+  const { stdout } = await run(ffprobeBin(), [
     "-v", "error",
     "-select_streams", "v:0",
     "-show_entries", `stream=${entries}`,
@@ -39,14 +101,26 @@ export async function extractPoster(video: string, atSeconds: number, target: st
   await ffmpeg(["-ss", atSeconds.toFixed(3), "-i", video, "-frames:v", "1", "-q:v", "2", target]);
 }
 
-export async function assertToolsAvailable(): Promise<void> {
-  for (const tool of ["ffmpeg", "ffprobe"]) {
+/**
+ * Preflight. Resolves both tools and proves each one actually executes — a
+ * path that resolves but will not run is the failure worth catching before a
+ * take, not mid-assemble.
+ */
+export async function assertToolsAvailable(): Promise<ResolvedTool[]> {
+  const tools = [
+    { name: "ffmpeg", resolved: { bin: ffmpegBin(), source: ffmpegTool!.source } },
+    { name: "ffprobe", resolved: { bin: ffprobeBin(), source: ffprobeTool!.source } },
+  ];
+  for (const { name, resolved } of tools) {
     try {
-      await run(tool, ["-version"]);
+      await run(resolved.bin, ["-version"]);
     } catch {
-      throw new Error(`${tool} is missing. Install ffmpeg (apt/brew/winget).`);
+      throw new Error(
+        `${name} resolved to ${resolved.bin} (${resolved.source}) but will not run.`,
+      );
     }
   }
+  return tools.map((t) => t.resolved);
 }
 
 /**

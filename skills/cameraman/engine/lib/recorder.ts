@@ -9,6 +9,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { ObsClient } from "./obs";
+import { ffmpegBin } from "./ffmpeg";
 
 /**
  * Screen capture. Recording is PER SHOT — `start(target)` and `stop()` are
@@ -71,7 +72,7 @@ export function x11grabRecorder(options: {
     async start(outputPath: string) {
       target = outputPath;
       child = spawn(
-        "ffmpeg",
+        ffmpegBin(),
         [
           "-hide_banner", "-loglevel", "error", "-y",
           "-f", "x11grab",
