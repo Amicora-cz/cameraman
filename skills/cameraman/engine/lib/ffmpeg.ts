@@ -10,6 +10,7 @@
  * The bundle is an optionalDependency — an unsupported platform or a blocked
  * registry leaves the install standing, with PATH as the only source.
  */
+import fs from "node:fs";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -27,15 +28,36 @@ function onPath(tool: string): boolean {
   }
 }
 
-/** `require` the installer package and hand back the binary it unpacked. */
+/**
+ * `require` the installer package and hand back the binary it unpacked.
+ *
+ * The executable bit is re-applied rather than trusted: `@ffprobe-installer`
+ * has been seen unpacking its binary 0644 (and 0744, which only happens to
+ * work when the installing user is the one recording), and the package checks
+ * the file's size but never whether it can be run. Fixing the mode is right
+ * either way — the file is ours, inside our own node_modules.
+ */
 function bundledBin(spec: string): string | null {
+  let bin: string;
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const mod = require(spec) as { path?: string } | undefined;
-    return mod?.path ?? null;
+    if (!mod?.path) return null;
+    bin = mod.path;
   } catch {
     return null;
   }
+  try {
+    fs.accessSync(bin, fs.constants.X_OK);
+  } catch {
+    try {
+      fs.chmodSync(bin, 0o755);
+      fs.accessSync(bin, fs.constants.X_OK);
+    } catch {
+      return null;
+    }
+  }
+  return bin;
 }
 
 function resolveTool(tool: "ffmpeg" | "ffprobe", installer: string): ResolvedTool {
