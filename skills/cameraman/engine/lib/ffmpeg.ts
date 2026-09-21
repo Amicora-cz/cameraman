@@ -148,6 +148,32 @@ export async function extractPoster(video: string, atSeconds: number, target: st
 const SKIP_DOWNLOAD = "CAMERAMAN_SKIP_FFMPEG_DOWNLOAD";
 
 /**
+ * One retry, because the download is an 80 MB reach across the network and the
+ * only source of an ffmpeg on a plugin install. A gateway timing out once is
+ * not a reason to fail a take.
+ */
+const FETCH_ATTEMPTS = 2;
+
+/**
+ * Why the fetch failed, in one line.
+ *
+ * `execFile` rejects with "Command failed: node install.js" and nothing else,
+ * which diagnoses nothing. The installer's own stack ends in a `{ url,
+ * statusCode }` tail, and that status is the whole answer \u2014 a 504 from a proxy
+ * reads very differently from a 404.
+ */
+function fetchFailureReason(error: unknown): string {
+  const details = error as { stderr?: string; message?: string } | undefined;
+  const text = (details?.stderr ?? "").trim();
+  const line = /^Error: .*/m.exec(text)?.[0];
+  const status = /statusCode:\s*(\d+)/.exec(text)?.[1];
+  if (line && status) return `${line} \u2014 HTTP ${status}`;
+  if (line) return line;
+  if (status) return `HTTP ${status}`;
+  return (details?.message ?? String(error)).split("\n")[0];
+}
+
+/**
  * Fetch the modern bundled ffmpeg when npm was not allowed to.
  *
  * `ffmpeg-static` pulls its binary in a postinstall step, and `/plugin
@@ -175,18 +201,25 @@ async function ensureBundledFfmpeg(): Promise<void> {
   }
 
   process.stdout.write("  ffmpeg: fetching the bundled build, once (~80 MB)\n");
-  try {
-    await run(process.execPath, [installer], { timeout: 10 * 60_000 });
-  } catch (error) {
-    // Not thrown here: PATH and FFMPEG_PATH were already ruled out, so the
-    // resolver is about to fail with the full list of places it looked. One
-    // line of why the fetch did not help is worth more than a second throw.
-    const why = error instanceof Error ? error.message.split("\n")[0] : String(error);
-    process.stdout.write(`  ffmpeg: fetch failed (${why})\n`);
-    return;
+  for (let attempt = 1; attempt <= FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      await run(process.execPath, [installer], { timeout: 10 * 60_000 });
+      ffmpegTool = null; // re-resolve; the binary is there now
+      process.stdout.write("  ffmpeg: fetched\n");
+      return;
+    } catch (error) {
+      const why = fetchFailureReason(error);
+      if (attempt < FETCH_ATTEMPTS) {
+        process.stdout.write(`  ffmpeg: fetch failed (${why}), retrying\n`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        continue;
+      }
+      // Not thrown here: PATH and FFMPEG_PATH were already ruled out, so the
+      // resolver is about to fail with the full list of places it looked. One
+      // line of why the fetch did not help is worth more than a second throw.
+      process.stdout.write(`  ffmpeg: fetch failed (${why})\n`);
+    }
   }
-  ffmpegTool = null; // re-resolve; the newer binary is there now
-  process.stdout.write("  ffmpeg: fetched\n");
 }
 
 /**
