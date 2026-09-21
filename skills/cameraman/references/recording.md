@@ -16,29 +16,36 @@ Per tool, in order: `FFMPEG_PATH` / `FFPROBE_PATH`, then PATH, then the copy
 npm unpacked into `node_modules`. PATH wins over the bundle deliberately — it
 is the newer build and the one the operator chose.
 
-The bundle is two optionalDependencies, so a blocked registry or a platform
-with no build leaves the install standing with PATH as the only source. It
-exists so a machine with no ffmpeg records instead of failing preflight.
+The bundle is optionalDependencies, so a blocked registry or a platform with
+no build leaves the install standing with PATH as the only source. It exists so
+a machine with no ffmpeg records instead of failing preflight.
 
 | | | |
 |---|---|---|
-| `ffmpeg-static` | ffmpeg 7.0.2 | downloads the binary in a postinstall step |
-| `@ffprobe-installer/ffprobe` | ffprobe 5.2 | plain optionalDependencies, no download step |
+| `ffmpeg-static` | ffmpeg 7.0.2 | fetched by a postinstall step |
+| `@ffmpeg-installer/ffmpeg` | ffmpeg 4.1 | plain npm resolution, always present |
+| `@ffprobe-installer/ffprobe` | ffprobe 5.2 | plain npm resolution, always present |
 
-They are split because no one package ships both at a usable age:
-`@ffmpeg-installer` stopped at ffmpeg 4.1 in 2022, and `ffprobe-static` is
-336 MB of every platform at once for an ffprobe older still. Together these two
-cost about 160 MB.
+ffmpeg has two because neither alone covers both installs. `/plugin install`
+runs npm with **scripts disabled**, so on that path `ffmpeg-static` unpacks to
+a directory with no binary in it — which is the install that matters most.
+`@ffmpeg-installer` arrives through ordinary resolution and is therefore always
+there, but it was abandoned in 2022 at an ffmpeg built in 2018. So: the newer
+one where scripts ran, the old one as the floor. `ffprobe-static` is not in the
+list — 336 MB of every platform at once, for an ffprobe 4.0.2 older than what
+`@ffprobe-installer` already gives.
 
-Verified to carry libx264, aac, `subtitles` (libass), `silencedetect`, the
-concat demuxer and `x11grab` — the whole pipeline. ffprobe 5.2 is below the
-≥ 6 above; it is a floor, not a recommendation, so install a current ffmpeg
-where you can.
+To pull the modern build into a plugin install afterwards, run this once in
+`<plugin-root>`; the engine picks it up with no further change:
 
-Because `ffmpeg-static` fetches its binary after npm resolves the tree,
-`--ignore-scripts` or a blocked download leaves a path pointing at nothing.
-That is handled: the engine falls through to PATH and, failing that, says
-which three places it looked. The binaries are GPL builds, which is worth
+```bash
+node node_modules/ffmpeg-static/install.js
+```
+
+Verified on both builds: libx264, aac, `subtitles` (libass), `silencedetect`,
+the concat demuxer and `x11grab`, and assemble end to end. ffmpeg 4.1 and
+ffprobe 5.2 sit below the ≥ 6 above — they are a floor, not a recommendation,
+so install a current ffmpeg where you can. The binaries are GPL builds, worth
 knowing if you redistribute the recording environment; cameraman itself stays
 MIT and does not ship them.
 

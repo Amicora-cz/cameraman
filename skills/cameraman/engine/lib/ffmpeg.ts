@@ -7,8 +7,15 @@
  * is the newer one and the one the operator chose. The bundle is the floor, so
  * that a machine with no ffmpeg still records instead of failing preflight.
  *
- * The bundle is an optionalDependency — an unsupported platform or a blocked
+ * The bundle is optionalDependencies — an unsupported platform or a blocked
  * registry leaves the install standing, with PATH as the only source.
+ *
+ * ffmpeg has two of them, tried newest first. `ffmpeg-static` (7.0.2) fetches
+ * its binary in a postinstall step, and `/plugin install` runs npm with
+ * scripts disabled, so on the install path that matters it is a directory with
+ * no binary in it. `@ffmpeg-installer` (4.1, abandoned in 2022) arrives
+ * through plain npm resolution and is therefore always there. Neither alone
+ * covers both cases.
  */
 import fs from "node:fs";
 import { execFile, execFileSync } from "node:child_process";
@@ -68,12 +75,15 @@ function bundledBin(spec: string): string | null {
   return bin;
 }
 
-function resolveTool(tool: "ffmpeg" | "ffprobe", installer: string): ResolvedTool {
+/** `installers` is tried in order, newest build first. */
+function resolveTool(tool: "ffmpeg" | "ffprobe", installers: string[]): ResolvedTool {
   const override = process.env[tool === "ffmpeg" ? "FFMPEG_PATH" : "FFPROBE_PATH"];
   if (override) return { bin: override, source: "override" };
   if (onPath(tool)) return { bin: tool, source: "path" };
-  const bundled = bundledBin(installer);
-  if (bundled) return { bin: bundled, source: "bundled" };
+  for (const installer of installers) {
+    const bundled = bundledBin(installer);
+    if (bundled) return { bin: bundled, source: "bundled" };
+  }
   throw new Error(
     `${tool} is missing. Either install ffmpeg (apt/brew/winget), or run ` +
       `\`npm install\` in the cameraman directory to get the bundled build, ` +
@@ -87,12 +97,12 @@ let ffmpegTool: ResolvedTool | null = null;
 let ffprobeTool: ResolvedTool | null = null;
 
 export function ffmpegBin(): string {
-  ffmpegTool ??= resolveTool("ffmpeg", "ffmpeg-static");
+  ffmpegTool ??= resolveTool("ffmpeg", ["ffmpeg-static", "@ffmpeg-installer/ffmpeg"]);
   return ffmpegTool.bin;
 }
 
 export function ffprobeBin(): string {
-  ffprobeTool ??= resolveTool("ffprobe", "@ffprobe-installer/ffprobe");
+  ffprobeTool ??= resolveTool("ffprobe", ["@ffprobe-installer/ffprobe"]);
   return ffprobeTool.bin;
 }
 
