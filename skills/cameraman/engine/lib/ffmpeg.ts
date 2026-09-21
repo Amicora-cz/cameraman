@@ -31,19 +31,27 @@ function onPath(tool: string): boolean {
 /**
  * `require` the installer package and hand back the binary it unpacked.
  *
+ * Two export shapes, because the two packages disagree: `ffmpeg-static` is the
+ * path, `@ffprobe-installer` wraps it in `{ path }`.
+ *
  * The executable bit is re-applied rather than trusted: `@ffprobe-installer`
  * has been seen unpacking its binary 0644 (and 0744, which only happens to
  * work when the installing user is the one recording), and the package checks
  * the file's size but never whether it can be run. Fixing the mode is right
  * either way — the file is ours, inside our own node_modules.
+ *
+ * A missing file is a normal outcome, not a bug: `ffmpeg-static` downloads in
+ * a postinstall step, so a blocked registry or `--ignore-scripts` leaves the
+ * path pointing at nothing. Returning null lets the caller say so properly.
  */
 function bundledBin(spec: string): string | null {
   let bin: string;
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const mod = require(spec) as { path?: string } | undefined;
-    if (!mod?.path) return null;
-    bin = mod.path;
+    const mod = require(spec) as string | { path?: string } | undefined;
+    const resolved = typeof mod === "string" ? mod : mod?.path;
+    if (!resolved) return null;
+    bin = resolved;
   } catch {
     return null;
   }
@@ -79,7 +87,7 @@ let ffmpegTool: ResolvedTool | null = null;
 let ffprobeTool: ResolvedTool | null = null;
 
 export function ffmpegBin(): string {
-  ffmpegTool ??= resolveTool("ffmpeg", "@ffmpeg-installer/ffmpeg");
+  ffmpegTool ??= resolveTool("ffmpeg", "ffmpeg-static");
   return ffmpegTool.bin;
 }
 

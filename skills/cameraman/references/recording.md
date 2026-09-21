@@ -16,14 +16,31 @@ Per tool, in order: `FFMPEG_PATH` / `FFPROBE_PATH`, then PATH, then the copy
 npm unpacked into `node_modules`. PATH wins over the bundle deliberately — it
 is the newer build and the one the operator chose.
 
-The bundle (`@ffmpeg-installer/ffmpeg`, `@ffprobe-installer/ffprobe`) is an
-optionalDependency, so an unsupported platform or a blocked registry leaves the
-install standing with PATH as the only source. It exists so a machine with no
-ffmpeg records instead of failing preflight; it is **not** the recommended
-build. It ships ffmpeg 4.1 and ffprobe 5.2, below the ≥ 6 above — verified to
-carry libx264, aac, `subtitles` (libass), `silencedetect`, the concat demuxer
-and `x11grab`, which is the whole pipeline, but install a current ffmpeg where
-you can.
+The bundle is two optionalDependencies, so a blocked registry or a platform
+with no build leaves the install standing with PATH as the only source. It
+exists so a machine with no ffmpeg records instead of failing preflight.
+
+| | | |
+|---|---|---|
+| `ffmpeg-static` | ffmpeg 7.0.2 | downloads the binary in a postinstall step |
+| `@ffprobe-installer/ffprobe` | ffprobe 5.2 | plain optionalDependencies, no download step |
+
+They are split because no one package ships both at a usable age:
+`@ffmpeg-installer` stopped at ffmpeg 4.1 in 2022, and `ffprobe-static` is
+336 MB of every platform at once for an ffprobe older still. Together these two
+cost about 160 MB.
+
+Verified to carry libx264, aac, `subtitles` (libass), `silencedetect`, the
+concat demuxer and `x11grab` — the whole pipeline. ffprobe 5.2 is below the
+≥ 6 above; it is a floor, not a recommendation, so install a current ffmpeg
+where you can.
+
+Because `ffmpeg-static` fetches its binary after npm resolves the tree,
+`--ignore-scripts` or a blocked download leaves a path pointing at nothing.
+That is handled: the engine falls through to PATH and, failing that, says
+which three places it looked. The binaries are GPL builds, which is worth
+knowing if you redistribute the recording environment; cameraman itself stays
+MIT and does not ship them.
 
 ## The browser is started by a human
 
