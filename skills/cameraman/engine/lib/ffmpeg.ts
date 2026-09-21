@@ -141,12 +141,57 @@ export async function extractPoster(video: string, atSeconds: number, target: st
   await ffmpeg(["-ss", atSeconds.toFixed(3), "-i", video, "-frames:v", "1", "-q:v", "2", target]);
 }
 
+/** Set to 1 to keep preflight from reaching the network. */
+const SKIP_DOWNLOAD = "CAMERAMAN_SKIP_FFMPEG_DOWNLOAD";
+
+/**
+ * Fetch the modern bundled ffmpeg when npm was not allowed to.
+ *
+ * `ffmpeg-static` pulls its binary in a postinstall step, and `/plugin
+ * install` runs npm with scripts disabled, so the package lands as a directory
+ * with nothing in it. Rather than leave every plugin install on the 2018
+ * fallback, preflight fetches it once — the same thing the postinstall would
+ * have done, at the first moment we are allowed to do it.
+ *
+ * It is skipped whenever the answer is already settled: an operator's
+ * `FFMPEG_PATH`, an ffmpeg on PATH, a binary already fetched, or the opt-out.
+ * A failure is not fatal — the whole point of the older fallback is that there
+ * is something to fall back to.
+ */
+async function ensureBundledFfmpeg(): Promise<void> {
+  if (process.env[SKIP_DOWNLOAD] === "1") return;
+  if (process.env.FFMPEG_PATH) return;
+  if (onPath("ffmpeg")) return;
+  if (bundledBin("ffmpeg-static")) return;
+
+  let installer: string;
+  try {
+    installer = require.resolve("ffmpeg-static/install.js");
+  } catch {
+    return; // not installed at all; nothing to fetch
+  }
+
+  process.stdout.write("  ffmpeg: fetching the bundled build, once (~80 MB)\n");
+  try {
+    await run(process.execPath, [installer], { timeout: 10 * 60_000 });
+  } catch {
+    process.stdout.write(
+      `  ffmpeg: fetch failed, using what is installed. ` +
+        `Set ${SKIP_DOWNLOAD}=1 to stop trying.\n`,
+    );
+    return;
+  }
+  ffmpegTool = null; // re-resolve; the newer binary is there now
+  process.stdout.write("  ffmpeg: fetched\n");
+}
+
 /**
  * Preflight. Resolves both tools and proves each one actually executes — a
  * path that resolves but will not run is the failure worth catching before a
  * take, not mid-assemble.
  */
 export async function assertToolsAvailable(): Promise<ResolvedTool[]> {
+  await ensureBundledFfmpeg();
   const tools = [
     { name: "ffmpeg", resolved: { bin: ffmpegBin(), source: ffmpegTool!.source } },
     { name: "ffprobe", resolved: { bin: ffprobeBin(), source: ffprobeTool!.source } },

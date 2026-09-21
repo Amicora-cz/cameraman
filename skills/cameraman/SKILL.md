@@ -67,8 +67,11 @@ Run the engine with `npx tsx <skill-dir>/engine/cli.ts <command>`.
 Check, and stop on the first failure rather than discovering it mid-take:
 
 - `ffmpeg` and `ffprobe` — on PATH, or `FFMPEG_PATH`/`FFPROBE_PATH`, or the
-  bundled fallback npm unpacked. The engine resolves them in that order, so
-  this fails preflight only when all three miss; report which source it found.
+  bundled fallback. The engine resolves them in that order, so this fails
+  preflight only when all three miss; report which source it found. Where
+  nothing but the old bundled build is present, preflight fetches the current
+  one once (~80 MB) unless `CAMERAMAN_SKIP_FFMPEG_DOWNLOAD=1`; say so when it
+  does, since it is the one step here that touches the network.
 - a pointer tool: `xdotool` (Linux) · `cliclick` (macOS) · PowerShell
   (Windows). No npm package supplies these — they are a real system install.
 - `playwright-core` resolvable from `<skill-dir>`. `/plugin install` runs

@@ -28,15 +28,31 @@ a machine with no ffmpeg records instead of failing preflight.
 
 ffmpeg has two because neither alone covers both installs. `/plugin install`
 runs npm with **scripts disabled**, so on that path `ffmpeg-static` unpacks to
-a directory with no binary in it — which is the install that matters most.
+a directory with no binary in it — and that is the install that matters most.
 `@ffmpeg-installer` arrives through ordinary resolution and is therefore always
 there, but it was abandoned in 2022 at an ffmpeg built in 2018. So: the newer
-one where scripts ran, the old one as the floor. `ffprobe-static` is not in the
+one where it exists, the old one as the floor. `ffprobe-static` is not in the
 list — 336 MB of every platform at once, for an ffprobe 4.0.2 older than what
 `@ffprobe-installer` already gives.
 
-To pull the modern build into a plugin install afterwards, run this once in
-`<plugin-root>`; the engine picks it up with no further change:
+### The fetch preflight does for you
+
+Because npm was not allowed to run that postinstall, **preflight does it**: the
+first run fetches the modern build once, then resolves to it. It is the same
+download npm would have done, at the first moment we are allowed to do it.
+
+It is skipped whenever the answer is already settled — `FFMPEG_PATH` is set,
+an ffmpeg is on PATH, the binary is already there, or `ffmpeg-static` is not
+installed. A failure is not fatal: it says so and carries on with the 4.1
+fallback, because having something to fall back to is the entire point.
+
+```bash
+CAMERAMAN_SKIP_FFMPEG_DOWNLOAD=1   # never reach the network at preflight
+```
+
+Opting out is the right move on a locked-down machine or where 80 MB per
+plugin install is not welcome; you then get ffmpeg 4.1 unless PATH has better.
+The equivalent by hand, run once in `<plugin-root>`:
 
 ```bash
 node node_modules/ffmpeg-static/install.js
