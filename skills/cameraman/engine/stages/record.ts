@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Locator, Page } from "playwright-core";
 import { config, takeDir, stamp } from "../config";
-import { durationSec } from "../lib/ffmpeg";
+import { durationSec, assertToolsAvailable } from "../lib/ffmpeg";
 import { connect, screenPointOf, type Session } from "../lib/browser";
 import { assertPointerToolAvailable, clickAt, moveSmooth, hotkey } from "../lib/pointer";
 import { gate, type GateLog } from "../lib/gate";
@@ -200,6 +200,10 @@ export async function record(options: RecordOptions): Promise<string> {
   const shots: Shot[] = shotsForOutput(scenario, options.outputId);
 
   if (!options.dryRun && options.pointer === "os") await assertPointerToolAvailable();
+  // Only a backend that writes a file needs ffmpeg; a dry run and `none` never
+  // touch it. Checked here so a missing binary stops the take before the
+  // browser moves, rather than surfacing on the first `recorder.stop()`.
+  if (!options.dryRun && options.backend !== "none") await assertToolsAvailable();
 
   const dir = takeDir(`${scenario.id}-${options.outputId}-${stamp()}`);
   fs.mkdirSync(dir, { recursive: true });

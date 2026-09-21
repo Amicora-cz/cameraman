@@ -23,47 +23,48 @@ a machine with no ffmpeg records instead of failing preflight.
 | | | |
 |---|---|---|
 | `ffmpeg-static` | ffmpeg 7.0.2 | fetched by a postinstall step |
-| `@ffmpeg-installer/ffmpeg` | ffmpeg 4.1 | plain npm resolution, always present |
 | `@ffprobe-installer/ffprobe` | ffprobe 5.2 | plain npm resolution, always present |
 
-ffmpeg has two because neither alone covers both installs. `/plugin install`
-runs npm with **scripts disabled**, so on that path `ffmpeg-static` unpacks to
-a directory with no binary in it — and that is the install that matters most.
-`@ffmpeg-installer` arrives through ordinary resolution and is therefore always
-there, but it was abandoned in 2022 at an ffmpeg built in 2018. So: the newer
-one where it exists, the old one as the floor. `ffprobe-static` is not in the
-list — 336 MB of every platform at once, for an ffprobe 4.0.2 older than what
-`@ffprobe-installer` already gives.
+`ffprobe-static` is not in the list — 336 MB of every platform at once, for an
+ffprobe 4.0.2 older than what `@ffprobe-installer` already gives.
 
 ### The fetch preflight does for you
 
-Because npm was not allowed to run that postinstall, **preflight does it**: the
-first run fetches the modern build once, then resolves to it. It is the same
-download npm would have done, at the first moment we are allowed to do it.
+`/plugin install` runs npm with **scripts disabled**, so on that path
+`ffmpeg-static` unpacks to a directory with no binary in it. **Preflight does
+that fetch**: the first run that actually needs ffmpeg pulls the build once,
+then resolves to it. It is the same download npm would have done, at the first
+moment we are allowed to do it.
 
-It is skipped whenever the answer is already settled — `FFMPEG_PATH` is set,
-an ffmpeg is on PATH, the binary is already there, or `ffmpeg-static` is not
-installed. A failure is not fatal: it says so and carries on with the 4.1
-fallback, because having something to fall back to is the entire point.
+It is skipped whenever the answer is already settled — `FFMPEG_PATH` is set, an
+ffmpeg is on PATH, the binary is already there, or `ffmpeg-static` is not
+installed. It is also skipped by the commands that never encode: a `--dry-run`
+and `--backend none` walk the scenario without touching ffmpeg at all.
 
 ```bash
 CAMERAMAN_SKIP_FFMPEG_DOWNLOAD=1   # never reach the network at preflight
 ```
 
-Opting out is the right move on a locked-down machine or where 80 MB per
-plugin install is not welcome; you then get ffmpeg 4.1 unless PATH has better.
-The equivalent by hand, run once in `<plugin-root>`:
+Opt out on a locked-down machine, and supply ffmpeg yourself — on PATH, via
+`FFMPEG_PATH`, or by running the fetch by hand, once, in `<plugin-root>`:
 
 ```bash
 node node_modules/ffmpeg-static/install.js
 ```
 
-Verified on both builds: libx264, aac, `subtitles` (libass), `silencedetect`,
-the concat demuxer and `x11grab`, and assemble end to end. ffmpeg 4.1 and
-ffprobe 5.2 sit below the ≥ 6 above — they are a floor, not a recommendation,
-so install a current ffmpeg where you can. The binaries are GPL builds, worth
-knowing if you redistribute the recording environment; cameraman itself stays
-MIT and does not ship them.
+There is no second bundled ffmpeg behind this one. An earlier version kept
+`@ffmpeg-installer` (ffmpeg 4.1, abandoned in 2022) as a floor for exactly the
+scripts-disabled case, but once preflight fetches the real build, 68 MB of
+2018 ffmpeg buys nothing. So a failed fetch with nothing on PATH is a failed
+preflight, which is where you want to find out — before a take, not on the
+first `recorder.stop()`.
+
+Verified: libx264, aac, `subtitles` (libass), `silencedetect`, the concat
+demuxer and `x11grab` all present, and assemble runs end to end. ffprobe 5.2
+sits below the ≥ 6 above — a floor, not a recommendation, so install a current
+ffmpeg where you can. The binaries are GPL builds, worth knowing if you
+redistribute the recording environment; cameraman itself stays MIT and does not
+ship them.
 
 ## The browser is started by a human
 

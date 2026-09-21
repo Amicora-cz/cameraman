@@ -10,12 +10,10 @@
  * The bundle is optionalDependencies — an unsupported platform or a blocked
  * registry leaves the install standing, with PATH as the only source.
  *
- * ffmpeg has two of them, tried newest first. `ffmpeg-static` (7.0.2) fetches
- * its binary in a postinstall step, and `/plugin install` runs npm with
- * scripts disabled, so on the install path that matters it is a directory with
- * no binary in it. `@ffmpeg-installer` (4.1, abandoned in 2022) arrives
- * through plain npm resolution and is therefore always there. Neither alone
- * covers both cases.
+ * ffmpeg comes from `ffmpeg-static` (7.0.2), which fetches its binary in a
+ * postinstall step. `/plugin install` runs npm with scripts disabled, so on
+ * that path it unpacks to a directory with no binary in it — which is what
+ * `ensureBundledFfmpeg` below is for.
  */
 import fs from "node:fs";
 import { execFile, execFileSync } from "node:child_process";
@@ -84,10 +82,15 @@ function resolveTool(tool: "ffmpeg" | "ffprobe", installers: string[]): Resolved
     const bundled = bundledBin(installer);
     if (bundled) return { bin: bundled, source: "bundled" };
   }
+  const fetchHint =
+    tool === "ffmpeg"
+      ? "`npm install` in the cameraman directory, or, where npm was not " +
+        "allowed to run scripts, `node node_modules/ffmpeg-static/install.js` there"
+      : "`npm install` in the cameraman directory";
   throw new Error(
     `${tool} is missing. Either install ffmpeg (apt/brew/winget), or run ` +
-      `\`npm install\` in the cameraman directory to get the bundled build, ` +
-      `or point ${tool === "ffmpeg" ? "FFMPEG_PATH" : "FFPROBE_PATH"} at one.`,
+      `${fetchHint}, or point ` +
+      `${tool === "ffmpeg" ? "FFMPEG_PATH" : "FFPROBE_PATH"} at one.`,
   );
 }
 
@@ -97,7 +100,7 @@ let ffmpegTool: ResolvedTool | null = null;
 let ffprobeTool: ResolvedTool | null = null;
 
 export function ffmpegBin(): string {
-  ffmpegTool ??= resolveTool("ffmpeg", ["ffmpeg-static", "@ffmpeg-installer/ffmpeg"]);
+  ffmpegTool ??= resolveTool("ffmpeg", ["ffmpeg-static"]);
   return ffmpegTool.bin;
 }
 
@@ -149,14 +152,14 @@ const SKIP_DOWNLOAD = "CAMERAMAN_SKIP_FFMPEG_DOWNLOAD";
  *
  * `ffmpeg-static` pulls its binary in a postinstall step, and `/plugin
  * install` runs npm with scripts disabled, so the package lands as a directory
- * with nothing in it. Rather than leave every plugin install on the 2018
- * fallback, preflight fetches it once — the same thing the postinstall would
- * have done, at the first moment we are allowed to do it.
+ * with nothing in it. Preflight does that fetch itself — the same thing the
+ * postinstall would have done, at the first moment we are allowed to do it.
  *
  * It is skipped whenever the answer is already settled: an operator's
  * `FFMPEG_PATH`, an ffmpeg on PATH, a binary already fetched, or the opt-out.
- * A failure is not fatal — the whole point of the older fallback is that there
- * is something to fall back to.
+ * On a plugin install this is the only source of an ffmpeg, so a failure here
+ * means preflight fails — loudly, before a take, which is the point of doing
+ * it at preflight rather than at the first `recorder.stop()`.
  */
 async function ensureBundledFfmpeg(): Promise<void> {
   if (process.env[SKIP_DOWNLOAD] === "1") return;
@@ -174,11 +177,12 @@ async function ensureBundledFfmpeg(): Promise<void> {
   process.stdout.write("  ffmpeg: fetching the bundled build, once (~80 MB)\n");
   try {
     await run(process.execPath, [installer], { timeout: 10 * 60_000 });
-  } catch {
-    process.stdout.write(
-      `  ffmpeg: fetch failed, using what is installed. ` +
-        `Set ${SKIP_DOWNLOAD}=1 to stop trying.\n`,
-    );
+  } catch (error) {
+    // Not thrown here: PATH and FFMPEG_PATH were already ruled out, so the
+    // resolver is about to fail with the full list of places it looked. One
+    // line of why the fetch did not help is worth more than a second throw.
+    const why = error instanceof Error ? error.message.split("\n")[0] : String(error);
+    process.stdout.write(`  ffmpeg: fetch failed (${why})\n`);
     return;
   }
   ffmpegTool = null; // re-resolve; the newer binary is there now

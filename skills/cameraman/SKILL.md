@@ -68,10 +68,11 @@ Check, and stop on the first failure rather than discovering it mid-take:
 
 - `ffmpeg` and `ffprobe` — on PATH, or `FFMPEG_PATH`/`FFPROBE_PATH`, or the
   bundled fallback. The engine resolves them in that order, so this fails
-  preflight only when all three miss; report which source it found. Where
-  nothing but the old bundled build is present, preflight fetches the current
-  one once (~80 MB) unless `CAMERAMAN_SKIP_FFMPEG_DOWNLOAD=1`; say so when it
-  does, since it is the one step here that touches the network.
+  preflight only when all three miss; report which source it found. Where none
+  is present, preflight fetches the bundled ffmpeg once (~80 MB) unless
+  `CAMERAMAN_SKIP_FFMPEG_DOWNLOAD=1`; say so when it does, since it is the one
+  step here that touches the network. `--dry-run` and `--backend none` skip
+  this check — they never encode anything.
 - a pointer tool: `xdotool` (Linux) · `cliclick` (macOS) · PowerShell
   (Windows). No npm package supplies these — they are a real system install.
 - `playwright-core` resolvable from `<skill-dir>`. `/plugin install` runs
