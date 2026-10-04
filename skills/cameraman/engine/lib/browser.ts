@@ -8,7 +8,7 @@
  * §2), signs into the demo Google account once, and the engine only attaches.
  */
 import type { Browser, Locator, Page } from "playwright-core";
-import type { Point } from "./pointer";
+import { focusWindow, type Point } from "./pointer";
 
 export type Session = {
   browser: Browser;
@@ -50,7 +50,12 @@ export async function connect(cdpUrl: string, scaleOverride: number | null): Pro
 
   const context = browser.contexts()[0];
   if (!context) throw new Error("Chrome has no context — is a window actually open?");
-  let page = context.pages()[0];
+  // Electron (and Chrome with devtools open) exposes a `devtools://` page as
+  // its own CDP target alongside the real one. Picking pages()[0] blindly can
+  // land on that inspector instead of the app — skip it when choosing the
+  // page to drive.
+  const isRealPage = (p: Page) => !p.url().startsWith("devtools://");
+  let page = context.pages().find(isRealPage) ?? context.pages()[0];
   if (!page) page = await context.newPage();
 
   const session: Session = {
@@ -100,8 +105,27 @@ export async function connect(cdpUrl: string, scaleOverride: number | null): Pro
 /**
  * Centre of an element in screen coordinates. It is scrolled into view first;
  * otherwise `boundingBox()` reports a position outside the window.
+ *
+ * Also raises the target window before computing anything. The real OS
+ * cursor clicks whatever is under it regardless of which app last had focus
+ * — a notification, an overlay, another window the operator alt-tabbed to
+ * mid-take, all silently steal the click otherwise, with no error: the move
+ * and the click both "succeed", they just land on the wrong window. This was
+ * caught empirically (an unrelated fullscreen app was foreground; the click
+ * had the right coordinates and did nothing) — `bringToFront()` alone did
+ * not fix it: it only asks Chromium to activate its own tab, and does not
+ * override Windows' focus-stealing prevention for a background process. An
+ * OS-level `focusWindow` is needed too, and it needs the actual OS window
+ * title, which is not always `page.title()` (a title set explicitly on a
+ * `BrowserWindow` does not follow the page's `<title>`) — best-effort by
+ * design, so a mismatch here degrades to "maybe already frontmost" rather
+ * than failing the shot.
  */
 export async function screenPointOf(session: Session, locator: Locator): Promise<Point> {
+  const title = await session.page.title().catch(() => "");
+  if (title) await focusWindow(title);
+  await session.page.bringToFront().catch(() => undefined);
+  await new Promise((resolve) => setTimeout(resolve, 150));
   await locator.scrollIntoViewIfNeeded({ timeout: 15_000 });
   await locator.waitFor({ state: "visible", timeout: 15_000 });
   const box = await locator.boundingBox();

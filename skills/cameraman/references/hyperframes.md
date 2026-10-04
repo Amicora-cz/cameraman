@@ -14,7 +14,25 @@ A verification screencast should stay almost bare — a reviewer wants evidence,
 not a trailer. A product promo is the opposite: the hook and the outro are what
 make it watchable.
 
-## The seam
+## Two seams, two purposes
+
+Hyperframes output reaches the final video in one of two ways, and they are
+not interchangeable:
+
+| | `--intro` / `--outro` | a `card` shot |
+|---|---|---|
+| Where | the very start/end of the whole video | anywhere in the shot sequence |
+| Narration/captions | none — it is silent design, outside the caption timeline | same as any shot: `narration` drives both |
+| How many | one each | as many as the scenario has shots |
+| Use for | the hook before any UI, the CTA/logo after | a text or title card *between* live shots |
+
+A trailer that cuts to a bare title card mid-sequence — "One of you isn't who
+they say they are." over a blurred UI silhouette, then back to live footage —
+is a `card` shot (see [scenario-format.md](scenario-format.md)), not a second
+`--intro`. The bookend flags stay for what only happens once: the very first
+and very last thing the viewer sees.
+
+## The bookend seam
 
 An mp4. Render a composition, hand it to `assemble`:
 

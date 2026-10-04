@@ -19,13 +19,15 @@ Parse the whole invocation before touching the project.
 |---|---|---|---|
 | `--scenario` | scenario id | ask, or author one (Step 1) | engine |
 | `--output` | output id within the scenario | `full` | engine |
-| `--backend` | `obs`, `x11grab`, `none` | `obs`, or `x11grab` on headless Linux | engine |
+| `--backend` | `obs`, `x11grab`, `gdigrab`, `none` | `obs`, or `x11grab`/`gdigrab` where OBS isn't installed | engine |
 | `--pointer` | `os`, `cdp` | `os` | engine |
 | `--dry-run` | flag | off | engine |
 | `--reset` | flag | off | engine |
 | `--burn-subs` | flag | sidecar `.srt` only | engine |
 | `--intro` / `--outro` | path to an mp4 | none | engine |
 | `--poster` | flag, or seconds | off | engine |
+| `--music` | path to an audio file | none | engine |
+| `--music-volume` | 0–1 | `0.25` | engine |
 | `--voice` | `elevenlabs`, `file:<path>`, `none` | `elevenlabs` when a key is present | agent-level |
 | `--lang` | narration language | the scenario's | agent-level |
 | `--preset` | `review`, `promo`, `tutorial` | inferred | agent-level |
@@ -81,8 +83,9 @@ Check, and stop on the first failure rather than discovering it mid-take:
   neither. Recording then needs one `npm install` in `<plugin-root>` (the
   directory holding `package.json`, two levels above `<skill-dir>`). `list`,
   `voice` and `assemble` run either way.
-- a **real** Chrome started by the human with `--remote-debugging-port=9222`
-  (never launched by the agent — see recording.md for why)
+- a **real** Chrome, or a target Electron app, started by the human with
+  `--remote-debugging-port=9222` (never launched by the agent — see
+  recording.md for why, and for the Electron case)
 - the target URL answers, and is not on the scenario's `forbidHosts`
 
 **Gate:** every requirement reports present, and the target responds.
@@ -140,6 +143,23 @@ frames, and no offset or scale factor repairs it afterwards.
 
 **Gate:** `cameraman-output/take-*/raw/` holds one non-empty file per shot in
 the output, and `shots.json` lists them.
+
+### Long raw takes (games, anything the scenario does not pace)
+
+When the app moves on its own — a match played by bots, a server-driven flow —
+record one long shot that waits on the app's state (`waitUntil`) and logs
+`markers`, then cut the beats out of it:
+
+```
+npx tsx <skill-dir>/engine/cli.ts cut --take <dir> --shot <id>                 # list markers
+npx tsx <skill-dir>/engine/cli.ts cut --take <dir> --shot <id> --marker <label> [--nth n] \
+    --before 1 --after 5 --out <clip.mp4>
+```
+
+This is the one exception to "one file per shot": `gdigrab` writes constant
+frame rate so file time tracks the clock, and `cut` rescales markers by
+file/wall duration. Cut clips go back into a scenario as `card` shots.
+See [references/scenario-format.md](references/scenario-format.md).
 
 ---
 

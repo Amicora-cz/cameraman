@@ -74,6 +74,25 @@ export type AssembleOptions = {
    * a page still settling.
    */
   poster?: number | true;
+  /**
+   * A background music bed, mixed under the narration for the whole
+   * assembled video (including bookends). One track, not a per-section
+   * playlist: a trailer's music arc (tension → build → sting → outro) is
+   * something you ask for in one generation prompt (Suno, a stock-music
+   * search, whatever), not something cameraman assembles from parts — it
+   * owns footage and voice, not composition.
+   *
+   * Looped if shorter than the final video, trimmed if longer, so any track
+   * length works without the caller doing the math.
+   */
+  music?: string;
+  /**
+   * Linear gain applied to the music bed before mixing, 0–1. Default 0.25
+   * (~-12 dB) — low enough that narration stays legible without per-word
+   * ducking, which cameraman does not attempt (see `music` above: one
+   * track, mixed once, not sidechained to the voice).
+   */
+  musicVolume?: number;
 };
 
 /** Re-encode a bookend so it concatenates with the shots without artefacts. */
@@ -221,23 +240,56 @@ export async function assemble(
   const srtPath = path.join(takePath, "final.srt");
 
   let delivered = final;
+
+  if (options.music) {
+    const withMusic = path.join(takePath, "final-music.mp4");
+    const volume = options.musicVolume ?? 0.25;
+    // `-stream_loop -1` loops the track indefinitely so a short cue never
+    // runs out; `amix duration=first` (the video's narration/silence track)
+    // then cuts the mix to the video's own length regardless of how long
+    // the music actually is — one command handles both "too short" and
+    // "too long" without measuring anything first.
+    await ffmpeg([
+      "-i", delivered,
+      "-stream_loop", "-1", "-i", path.resolve(options.music),
+      "-filter_complex",
+      `[1:a]volume=${volume}[music];[0:a][music]amix=inputs=2:duration=first:dropout_transition=0[aout]`,
+      "-map", "0:v", "-map", "[aout]",
+      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest",
+      withMusic,
+    ]);
+    delivered = withMusic;
+  }
+
   if (burnSubtitles) {
     // A sidecar .srt is not picked up by a player on its own. For sharing and
     // for a reviewer the captions are burned in; the sidecar stays for YouTube.
     const subbed = path.join(takePath, "final-subtitled.mp4");
-    await ffmpeg([
-      "-i", final,
-      "-vf",
-      `subtitles=${srtPath.replace(/[\\:]/g, "\\$&")}:force_style='FontSize=10,PrimaryColour=&Hffffff&,OutlineColour=&HB0000000&,BorderStyle=3,Outline=1,Shadow=0,MarginV=28'`,
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-      "-c:a", "copy",
-      subbed,
-    ]);
+    // The `subtitles` filter's argument is itself colon-delimited, so a
+    // Windows path's drive-letter colon collides with it. Escaping the
+    // colon (even switching backslashes to forward slashes first) still
+    // gets mis-tokenized in practice — verified directly: the filename
+    // fragment ends up assigned to the filter's unrelated `original_size`
+    // option instead of `filename`. Sidestepping the drive letter entirely
+    // is the reliable fix: run ffmpeg with its cwd set to the take
+    // directory (which is where every path here already lives — `delivered`
+    // included) and hand the filter a bare filename, no path, no colon.
+    await ffmpeg(
+      [
+        "-i", path.basename(delivered),
+        "-vf",
+        `subtitles=${path.basename(srtPath)}:force_style='FontSize=10,PrimaryColour=&Hffffff&,OutlineColour=&HB0000000&,BorderStyle=3,Outline=1,Shadow=0,MarginV=28'`,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "copy",
+        path.basename(subbed),
+      ],
+      { cwd: takePath },
+    );
     delivered = subbed;
   }
 
   if (options.poster) {
-    const at = typeof options.poster === "number" ? options.poster : (await durationSec(final)) / 3;
+    const at = typeof options.poster === "number" ? options.poster : (await durationSec(delivered)) / 3;
     const poster = path.join(takePath, "poster.jpg");
     await extractPoster(delivered, at, poster);
     process.stdout.write(`✓ ${poster} (at ${at.toFixed(1)}s)\n`);

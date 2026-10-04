@@ -5,6 +5,9 @@
  *                quality, chapters, and it works on all three platforms.
  * - `x11grab`  — ffmpeg straight off an X display. Needs nothing else on Linux,
  *                so it suits CI and smoke-testing the pipeline.
+ * - `gdigrab`  — ffmpeg straight off the desktop on Windows. Needs nothing
+ *                else either — same reasoning as x11grab, same ffmpeg binary
+ *                cameraman already resolves, just a different `-f`.
  * - `none`     — records nothing, just walks the scenario (`--dry-run`).
  */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -64,6 +67,9 @@ export function x11grabRecorder(options: {
   display: string;
   size: string;
   fps?: number;
+  /** Draw the OS cursor. Off for `--pointer cdp`: nothing moves it, so a
+   *  cursor in frame is wherever the user's mouse happened to rest. */
+  drawMouse?: boolean;
 }): Recorder {
   let child: ChildProcess | null = null;
   let target = "";
@@ -76,7 +82,7 @@ export function x11grabRecorder(options: {
         [
           "-hide_banner", "-loglevel", "error", "-y",
           "-f", "x11grab",
-          "-draw_mouse", "1",
+          "-draw_mouse", options.drawMouse === false ? "0" : "1",
           "-video_size", options.size,
           "-framerate", String(options.fps ?? 30),
           "-i", options.display,
@@ -97,6 +103,69 @@ export function x11grabRecorder(options: {
       if (!child) return "";
       const done = new Promise<void>((resolve) => child?.once("close", () => resolve()));
       // 'q' on stdin ends ffmpeg cleanly and writes the moov atom.
+      child.stdin?.write("q");
+      child.stdin?.end();
+      await Promise.race([done, new Promise((r) => setTimeout(r, 8000))]);
+      if (child.exitCode === null) child.kill("SIGINT");
+      child = null;
+      return target;
+    },
+  };
+}
+
+/**
+ * Full-desktop capture on Windows via ffmpeg's `gdigrab` — no separate
+ * install, no websocket to configure, same reasoning as `x11grab` on Linux.
+ * Captures the whole screen (not a specific window): the operator is
+ * expected to put the target app in front — fullscreen, ideally, so nothing
+ * else is in frame — the same way a human recording a demo would.
+ */
+export function gdigrabRecorder(options: { size?: string; fps?: number; drawMouse?: boolean }): Recorder {
+  let child: ChildProcess | null = null;
+  let target = "";
+
+  return {
+    async start(outputPath: string) {
+      target = outputPath;
+      const sizeArgs = options.size
+        ? ["-offset_x", "0", "-offset_y", "0", "-video_size", options.size]
+        : [];
+      child = spawn(
+        ffmpegBin(),
+        [
+          "-hide_banner", "-loglevel", "error", "-y",
+          "-f", "gdigrab",
+          // Same rule as x11grab: no cursor unless the engine drives the real one.
+          "-draw_mouse", options.drawMouse === false ? "0" : "1",
+          "-framerate", String(options.fps ?? 30),
+          ...sizeArgs,
+          "-i", "desktop",
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+          "-pix_fmt", "yuv420p",
+          // gdigrab stamps frames with capture time; constant frame rate
+          // output fills any dropped frame with a duplicate, so file time
+          // tracks wall-clock time and shot markers stay aligned.
+          "-fps_mode", "cfr", "-r", String(options.fps ?? 30),
+          // Fragmented MP4 stays readable if ffmpeg is killed before it can
+          // write the index — a long take that dies is still footage.
+          "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+          target,
+        ],
+        { stdio: ["pipe", "ignore", "pipe"] },
+      );
+      child.stderr?.on("data", (chunk) => process.stderr.write(`  ffmpeg: ${chunk}`));
+      // Same settle time as x11grab — ffmpeg needs a moment to attach to the
+      // desktop DC, or the first shot is missing.
+      await new Promise((r) => setTimeout(r, 1200));
+    },
+    async chapter() {
+      // gdigrab has no chapters — shot offsets live in shots.json anyway.
+    },
+    async stop() {
+      if (!child) return "";
+      const done = new Promise<void>((resolve) => child?.once("close", () => resolve()));
+      // 'q' on stdin ends ffmpeg cleanly and writes the moov atom — same
+      // trick as x11grab, ffmpeg's console-quit handling isn't backend-specific.
       child.stdin?.write("q");
       child.stdin?.end();
       await Promise.race([done, new Promise((r) => setTimeout(r, 8000))]);

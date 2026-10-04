@@ -14,6 +14,13 @@ const PROJECT_SCENARIO_DIR = process.env.CAMERAMAN_SCENARIOS
   ? path.resolve(process.env.CAMERAMAN_SCENARIOS)
   : path.join(process.cwd(), "cameraman-scenarios");
 
+/**
+ * Where a scenario's own relative paths (a `card` shot's `file`) resolve
+ * from — this directory, not `process.cwd()`, which depends on wherever the
+ * command happened to be invoked from. Exported so record.ts can use it too.
+ */
+export const scenarioDir = PROJECT_SCENARIO_DIR;
+
 function loadProjectScenarios(): Scenario[] {
   if (!fs.existsSync(PROJECT_SCENARIO_DIR)) return [];
   const found: Scenario[] = [];
