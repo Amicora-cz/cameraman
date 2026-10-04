@@ -109,9 +109,10 @@ export function ffprobeBin(): string {
   return ffprobeTool.bin;
 }
 
-export async function ffmpeg(args: string[]): Promise<void> {
+export async function ffmpeg(args: string[], options: { cwd?: string } = {}): Promise<void> {
   await run(ffmpegBin(), ["-hide_banner", "-loglevel", "error", "-y", ...args], {
     maxBuffer: 64 * 1024 * 1024,
+    ...options,
   });
 }
 

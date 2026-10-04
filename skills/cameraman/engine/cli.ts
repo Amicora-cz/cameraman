@@ -12,6 +12,7 @@
 import { record } from "./stages/record";
 import { assemble, type AssembleOptions } from "./stages/assemble";
 import { voice } from "./stages/voice";
+import { cut } from "./stages/cut";
 import { listScenarios, getScenario } from "./scenarios";
 
 function flag(name: string, fallback?: string): string | undefined {
@@ -25,11 +26,14 @@ const has = (name: string) => process.argv.includes(`--${name}`);
 function assembleOptions(): AssembleOptions {
   // `--poster` alone means "pick one"; `--poster 12.5` pins the timestamp.
   const poster = flag("poster");
+  const musicVolume = flag("music-volume");
   return {
     burnSubtitles: has("burn-subs"),
     intro: flag("intro"),
     outro: flag("outro"),
     poster: poster === "true" ? true : poster !== undefined ? Number(poster) : undefined,
+    music: flag("music"),
+    musicVolume: musicVolume !== undefined ? Number(musicVolume) : undefined,
   };
 }
 
@@ -53,7 +57,7 @@ async function main() {
     const dir = await record({
       scenarioId,
       outputId,
-      backend: (flag("backend", "obs") as "obs" | "x11grab" | "none"),
+      backend: (flag("backend", "obs") as "obs" | "x11grab" | "gdigrab" | "none"),
       pointer: (flag("pointer", "os") as "os" | "cdp"),
       dryRun: has("dry-run"),
       reset: has("reset"),
@@ -79,7 +83,22 @@ async function main() {
     return;
   }
 
-  throw new Error(`Unknown command '${command}'. Use: list | record | voice | assemble`);
+  if (command === "cut") {
+    const num = (name: string) => (flag(name) !== undefined ? Number(flag(name)) : undefined);
+    await cut({
+      take: flag("take")!,
+      shot: flag("shot")!,
+      marker: flag("marker"),
+      nth: num("nth"),
+      at: num("at"),
+      before: num("before") ?? 1,
+      after: num("after") ?? 5,
+      out: flag("out"),
+    });
+    return;
+  }
+
+  throw new Error(`Unknown command '${command}'. Use: list | record | voice | assemble | cut`);
 }
 
 main().catch((error) => {

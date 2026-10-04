@@ -19,7 +19,15 @@ export type Target = {
 export type Step =
   | { kind: "goto"; url: string }
   | { kind: "newTab"; url: string }
-  | { kind: "switchTab"; urlIncludes: string }
+  /**
+   * `nth` (0-based, default 0) picks among several pages that all match
+   * `urlIncludes` — several player windows spawned with the same URL shape
+   * (differing only in query params like `playerName`) are the case this
+   * exists for: there is no substring that identifies "the second one"
+   * short of a value the scenario cannot know in advance (a randomly
+   * generated bot name).
+   */
+  | { kind: "switchTab"; urlIncludes: string; nth?: number }
   | { kind: "click"; target: Target }
   /** Move onto an element without clicking — show it without firing it. */
   | { kind: "point"; target: Target }
@@ -28,7 +36,40 @@ export type Step =
   | { kind: "scroll"; deltaY: number; overMs?: number }
   | { kind: "focusAddressBar" }
   | { kind: "hold"; ms: number }
-  | { kind: "gate"; name: string; message: string };
+  | { kind: "gate"; name: string; message: string }
+  /**
+   * Run arbitrary JS in the page — for flipping app state that has no UI
+   * flow worth filming (a settings IPC call, a feature flag), not for
+   * anything the viewer is meant to see happen. `scenario.reset.evaluate`
+   * already does the same thing for "start of take"; this is the per-step
+   * version for the middle of a scenario.
+   */
+  | { kind: "evaluate"; script: string }
+  /**
+   * Poll a JS expression in the page until it is truthy. For apps whose
+   * progress is driven by something other than the scenario (a server, a
+   * timer, bots) a fixed `hold` is either too short (flaky) or too long
+   * (dead footage); waiting on the app's own state is neither. `description`
+   * names the condition in the error and the dry-run report.
+   */
+  | {
+      kind: "waitUntil";
+      script: string;
+      description?: string;
+      timeoutMs?: number;
+      pollMs?: number;
+    };
+
+/**
+ * Timeline markers for a recorded shot. `script` is polled in the page while
+ * the camera rolls; every time its (string) value changes, the new value is
+ * logged with its offset into the shot's file. A long raw take — a whole
+ * match played by bots — can then be cut into clips by what happened in it
+ * (`cameraman cut --marker ...`) instead of by scrubbing through it.
+ */
+export type MarkerWatch = { script: string; pollMs?: number };
+
+export type Marker = { t: number; label: string };
 
 export type Shot = {
   id: string;
@@ -57,6 +98,26 @@ export type Shot = {
   /** Floor for the shot length — the still beats a reviewer needs to read. */
   minHoldMs: number;
   steps: Step[];
+  markers?: MarkerWatch;
+  /**
+   * Pre-rendered footage instead of a live recording — a designed text or
+   * title card (typically from Hyperframes, or any tool that produces an
+   * mp4), placed anywhere in the shot sequence like any other shot.
+   *
+   * It rides the same pipeline as a recorded shot: narration, caption
+   * timing, and "never trim below what was shot, freeze the last frame if
+   * narration outruns it" all apply unchanged, because `assemble` only sees
+   * a shot with a `videoPath` and a `narration` — it does not know or care
+   * where the file came from. `record` copies `file` into the take's `raw/`
+   * directory and skips `setup`/`steps` for this shot entirely, so both may
+   * be left empty.
+   *
+   * This is deliberately not the same mechanism as `--intro`/`--outro`:
+   * those bookend the whole assembled video and sit outside the caption
+   * timeline; a `card` is one shot among others, narrated and captioned like
+   * any of them.
+   */
+  card?: { file: string };
 };
 
 export type Output = {

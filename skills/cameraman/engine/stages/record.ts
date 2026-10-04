@@ -12,16 +12,25 @@ import { durationSec, assertToolsAvailable } from "../lib/ffmpeg";
 import { connect, screenPointOf, type Session } from "../lib/browser";
 import { assertPointerToolAvailable, clickAt, moveSmooth, hotkey } from "../lib/pointer";
 import { gate, type GateLog } from "../lib/gate";
-import { noopRecorder, obsRecorder, x11grabRecorder, type Recorder } from "../lib/recorder";
-import { getScenario, shotsForOutput, type Shot, type Step, type Target } from "../scenarios";
+import { noopRecorder, obsRecorder, x11grabRecorder, gdigrabRecorder, type Recorder } from "../lib/recorder";
+import {
+  getScenario,
+  shotsForOutput,
+  scenarioDir,
+  type Marker,
+  type MarkerWatch,
+  type Shot,
+  type Step,
+  type Target,
+} from "../scenarios";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export type RecordOptions = {
   scenarioId: string;
   outputId: string;
-  /** `obs` (produkce), `x11grab` (Linux/CI), `none` (jen proklik). */
-  backend: "obs" | "x11grab" | "none";
+  /** `obs` (produkce), `x11grab` (Linux/CI), `gdigrab` (Windows, no install), `none` (jen proklik). */
+  backend: "obs" | "x11grab" | "gdigrab" | "none";
   /** `os` = the real cursor, `cdp` = clicks with nothing visible (smoke test). */
   pointer: "os" | "cdp";
   /**
@@ -46,6 +55,10 @@ export type ShotRecord = {
   seconds: number;
   minHoldMs: number;
   narration: string;
+  /** State changes seen while recording — see `Shot.markers`. */
+  markers?: Marker[];
+  /** Wall-clock length of the recording, to rescale markers onto file time. */
+  wallSeconds?: number;
 };
 
 function locate(page: Page, target: Target): Locator {
@@ -100,11 +113,19 @@ async function runStep(
     }
 
     case "switchTab": {
-      const match = session.page
-        .context()
-        .pages()
-        .find((p) => p.url().includes(step.urlIncludes));
-      if (!match) throw new Error(`No open tab matches '${step.urlIncludes}'.`);
+      // Every context, not just the current page's: Electron windows with
+      // their own session partition show up as separate CDP contexts.
+      const matches = session.browser
+        .contexts()
+        .flatMap((context) => context.pages())
+        .filter((p) => p.url().includes(step.urlIncludes));
+      const match = matches[step.nth ?? 0];
+      if (!match) {
+        throw new Error(
+          `No open tab matches '${step.urlIncludes}' at index ${step.nth ?? 0} ` +
+            `(${matches.length} matched).`,
+        );
+      }
       await match.bringToFront();
       session.use(match);
       await sleep(400);
@@ -181,7 +202,56 @@ async function runStep(
       if (options.dryRun) return;
       await gate(step.name, step.message, since, gates);
       return;
+
+    case "evaluate":
+      await session.page.evaluate(step.script);
+      return;
+
+    case "waitUntil": {
+      const label = step.description ?? step.script;
+      const deadline = Date.now() + (step.timeoutMs ?? 60_000);
+      const pollMs = step.pollMs ?? 500;
+      for (;;) {
+        const ok = await session.page.evaluate(step.script).catch(() => false);
+        if (ok) return;
+        if (Date.now() > deadline) {
+          missing.push(`until:${label}`);
+          if (options.dryRun) return;
+          throw new Error(`Timed out waiting until: ${label}`);
+        }
+        await sleep(pollMs);
+      }
+    }
   }
+}
+
+/**
+ * Poll `watch.script` while a shot records and log every change of its value
+ * with its offset from the moment the recorder was asked to start. Returns a
+ * stop function that resolves to the collected markers.
+ */
+function watchMarkers(session: Session, watch: MarkerWatch, startedAt: number) {
+  const markers: Marker[] = [];
+  let running = true;
+  let last: string | null = null;
+  const loop = (async () => {
+    while (running) {
+      const value = await session.page
+        .evaluate(watch.script)
+        .then((v) => (v == null ? null : String(v)))
+        .catch(() => null);
+      if (value != null && value !== last) {
+        markers.push({ t: (Date.now() - startedAt) / 1000, label: value });
+        last = value;
+      }
+      await sleep(watch.pollMs ?? 250);
+    }
+  })();
+  return async () => {
+    running = false;
+    await loop;
+    return markers;
+  };
 }
 
 function assertAllowedHost(baseUrl: string, forbidHosts: string[]): void {
@@ -201,9 +271,13 @@ export async function record(options: RecordOptions): Promise<string> {
 
   if (!options.dryRun && options.pointer === "os") await assertPointerToolAvailable();
   // Only a backend that writes a file needs ffmpeg; a dry run and `none` never
-  // touch it. Checked here so a missing binary stops the take before the
-  // browser moves, rather than surfacing on the first `recorder.stop()`.
-  if (!options.dryRun && options.backend !== "none") await assertToolsAvailable();
+  // touch it. A card shot needs ffprobe regardless of backend, to measure the
+  // file it is given. Checked here so a missing binary stops the take before
+  // the browser moves, rather than surfacing on the first `recorder.stop()`.
+  const hasCardShots = shots.some((shot) => shot.card);
+  if (!options.dryRun && (options.backend !== "none" || hasCardShots)) {
+    await assertToolsAvailable();
+  }
 
   const dir = takeDir(`${scenario.id}-${options.outputId}-${stamp()}`);
   fs.mkdirSync(dir, { recursive: true });
@@ -215,15 +289,21 @@ export async function record(options: RecordOptions): Promise<string> {
         ? x11grabRecorder({
             display: options.display ?? process.env.DISPLAY ?? ":0",
             size: options.captureSize ?? "1920x1080",
+            drawMouse: options.pointer !== "cdp",
           })
-        : noopRecorder();
+        : options.backend === "gdigrab"
+          ? gdigrabRecorder({ size: options.captureSize, drawMouse: options.pointer !== "cdp" })
+          : noopRecorder();
 
-  const session = await connect(config.cdpUrl, config.pointerScale);
+  // An output made entirely of card shots never touches a browser — nothing
+  // in it needs a live app running.
+  const hasLiveShots = shots.some((shot) => !shot.card);
+  const session = hasLiveShots ? await connect(config.cdpUrl, config.pointerScale) : null;
 
   // Tabs from earlier runs would be in frame — a take starts on a clean window.
-  if (!options.dryRun) await session.closeExtraTabs();
+  if (session && !options.dryRun) await session.closeExtraTabs();
 
-  if (options.reset && scenario.reset) {
+  if (session && options.reset && scenario.reset) {
     await session.page.goto(scenario.reset.url, { waitUntil: "domcontentloaded" });
     await session.page.evaluate(scenario.reset.evaluate);
     process.stdout.write("↺ starting state restored\n");
@@ -242,39 +322,120 @@ export async function record(options: RecordOptions): Promise<string> {
     for (const shot of shots) {
       process.stdout.write(`▶ ${shot.id} — ${shot.title}\n`);
 
+      // A card shot's footage is a file, not the browser — nothing here
+      // touches the recorder, the session or the pointer. It still gets a
+      // shots.json entry with a videoPath and narration, so `assemble`
+      // treats it exactly like a recorded shot.
+      if (shot.card) {
+        // Resolved from the scenario directory, not process.cwd() — a
+        // scenario's `card: { file: "./cards/x.mp4" }` means "next to me",
+        // regardless of where `record` was invoked from.
+        const sourceFile = path.isAbsolute(shot.card.file)
+          ? shot.card.file
+          : path.resolve(scenarioDir, shot.card.file);
+        if (!fs.existsSync(sourceFile)) {
+          missing.push(`card:${shot.id}`);
+          if (!options.dryRun) {
+            throw new Error(`Card shot '${shot.id}' references missing file '${sourceFile}'.`);
+          }
+          records.push({
+            id: shot.id,
+            title: shot.title,
+            videoPath: "",
+            seconds: 0,
+            minHoldMs: shot.minHoldMs,
+            narration: shot.narration,
+          });
+          continue;
+        }
+        if (options.dryRun) {
+          process.stdout.write(`   ▤ card ${path.basename(sourceFile)} (dry run — not copied)\n`);
+          records.push({
+            id: shot.id,
+            title: shot.title,
+            videoPath: "",
+            seconds: 0,
+            minHoldMs: shot.minHoldMs,
+            narration: shot.narration,
+          });
+          continue;
+        }
+        const target = path.join(rawDir, `${shot.id}${path.extname(sourceFile) || ".mp4"}`);
+        fs.copyFileSync(sourceFile, target);
+        const seconds = await durationSec(target);
+        process.stdout.write(`   ▤ ${path.basename(target)} ${seconds.toFixed(1)}s (card)\n`);
+        records.push({
+          id: shot.id,
+          title: shot.title,
+          videoPath: target,
+          seconds,
+          minHoldMs: shot.minHoldMs,
+          narration: shot.narration,
+        });
+        continue;
+      }
+
+      // Reaching here means this shot has no `card`, so `hasLiveShots` was
+      // true and `session` was connected above.
+      const liveSession = session!;
+
       // Navigation and waiting for render — before the camera rolls, so no
       // loading state reaches the video and nothing needs cutting out.
       for (const step of shot.setup ?? []) {
-        await runStep(step, session, since, gates, options, missing);
+        await runStep(step, liveSession, since, gates, options, missing);
       }
 
       const target = path.join(rawDir, `${shot.id}.mp4`);
+      const recordStartedAt = Date.now();
       if (!options.dryRun) await recorder.start(target);
       await recorder.chapter(shot.title);
+      const stopMarkers = shot.markers
+        ? watchMarkers(liveSession, shot.markers, recordStartedAt)
+        : null;
 
       const startedMs = Date.now();
-      for (const step of shot.steps) {
-        await runStep(step, session, since, gates, options, missing);
+      let failed = false;
+      try {
+        for (const step of shot.steps) {
+          await runStep(step, liveSession, since, gates, options, missing);
+        }
+
+        // A still beat at the end: post-production draws on it when the
+        // narration runs longer than expected.
+        const elapsed = Date.now() - startedMs;
+        if (!options.dryRun && elapsed < shot.minHoldMs) await sleep(shot.minHoldMs - elapsed);
+        if (!options.dryRun) await sleep(600);
+      } catch (error) {
+        failed = true;
+        throw error;
+      } finally {
+        // Also on failure: a long take that dies twenty minutes in is still
+        // footage, and an unstopped grabber leaves an unreadable file behind.
+        const markers = stopMarkers ? await stopMarkers() : undefined;
+        const wallSeconds = (Date.now() - recordStartedAt) / 1000;
+        const written = options.dryRun ? "" : await recorder.stop().catch(() => "");
+        const seconds = written ? await durationSec(written).catch(() => 0) : 0;
+        if (markers?.length) {
+          const list = markers.map((m) => `${m.t.toFixed(1)}s ${m.label}`).join(" · ");
+          process.stdout.write(`   ⚑ ${list}\n`);
+        }
+        if (written) {
+          process.stdout.write(
+            `   ⏺ ${path.basename(written)} ${seconds.toFixed(1)}s${failed ? " (incomplete)" : ""}\n`,
+          );
+        }
+
+        records.push({
+          id: shot.id,
+          title: shot.title,
+          videoPath: written,
+          seconds,
+          minHoldMs: shot.minHoldMs,
+          narration: shot.narration,
+          markers,
+          wallSeconds,
+        });
       }
-
-      // A still beat at the end: post-production draws on it when the
-      // narration runs longer than expected.
-      const elapsed = Date.now() - startedMs;
-      if (!options.dryRun && elapsed < shot.minHoldMs) await sleep(shot.minHoldMs - elapsed);
-      if (!options.dryRun) await sleep(600);
-
-      const written = options.dryRun ? "" : await recorder.stop().catch(() => "");
-      const seconds = written ? await durationSec(written).catch(() => 0) : 0;
-      if (written) process.stdout.write(`   ⏺ ${path.basename(written)} ${seconds.toFixed(1)}s\n`);
-
-      records.push({
-        id: shot.id,
-        title: shot.title,
-        videoPath: written,
-        seconds,
-        minHoldMs: shot.minHoldMs,
-        narration: shot.narration,
-      });
     }
   } finally {
     fs.writeFileSync(
@@ -293,11 +454,11 @@ export async function record(options: RecordOptions): Promise<string> {
       ),
       "utf8",
     );
-    await session.browser.close().catch(() => undefined);
+    await session?.browser.close().catch(() => undefined);
   }
 
   if (missing.length > 0) {
-    process.stdout.write(`\n⚠ Selectors not found: ${[...new Set(missing)].join(", ")}\n`);
+    process.stdout.write(`\n⚠ Not found (selector, or 'card:<shot id>' for a missing card file): ${[...new Set(missing)].join(", ")}\n`);
     if (options.dryRun) process.stdout.write("  (dry run — fix them in the scenario and run again)\n");
   }
   process.stdout.write(`\n✓ ${path.join(dir, "shots.json")}\n`);

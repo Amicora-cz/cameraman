@@ -29,6 +29,92 @@ Add-Type -Name W -Namespace G -MemberDefinition @'
 '@
 `;
 
+/**
+ * Plain `SetForegroundWindow` from an unrelated background process almost
+ * always fails silently on Windows — it is deliberately restricted since
+ * Windows 2000 to stop apps popping themselves to the front uninvited. The
+ * standard workaround is `AttachThreadInput`: borrow the current foreground
+ * thread's input state for the duration of the call, which grants the
+ * permission that a plain call is refused. Found the hard way — the plain
+ * call returned no error and did nothing, an unrelated fullscreen app stayed
+ * in front, and the click landed on it instead of the recording target.
+ */
+const WIN_FOCUS_HELPER = `
+Add-Type -Name F -Namespace G -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+[DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+[DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+[DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+'@
+function Set-RealForeground([IntPtr]$target) {
+  $dummy = [uint32]0
+  $fg = [G.F]::GetForegroundWindow()
+  $fgThread = [G.F]::GetWindowThreadProcessId($fg, [ref]$dummy)
+  $targetThread = [G.F]::GetWindowThreadProcessId($target, [ref]$dummy)
+  $curThread = [G.F]::GetCurrentThreadId()
+  [G.F]::AttachThreadInput($curThread, $fgThread, $true) | Out-Null
+  [G.F]::AttachThreadInput($targetThread, $fgThread, $true) | Out-Null
+  [G.F]::ShowWindow($target, 9) | Out-Null
+  [G.F]::BringWindowToTop($target) | Out-Null
+  [G.F]::SetForegroundWindow($target) | Out-Null
+  [G.F]::AttachThreadInput($curThread, $fgThread, $false) | Out-Null
+  [G.F]::AttachThreadInput($targetThread, $fgThread, $false) | Out-Null
+}
+`;
+
+/**
+ * Raise the OS window whose title contains `titleIncludes` — best-effort,
+ * never throws.
+ *
+ * Why this exists: a page-level `bringToFront()` (CDP `Page.bringToFront`)
+ * only asks Chromium to activate its own tab/window; it does not fight
+ * Windows' focus-stealing prevention, and it does nothing at all for an
+ * unrelated app that happens to be foreground (a fullscreen game, an
+ * overlay, whatever the operator alt-tabbed to). The real OS cursor clicks
+ * whatever is actually on top at that screen position regardless — silently:
+ * the move and the click both "succeed", they just land on the wrong window.
+ * Passed via env var, not string-interpolated into the command, so a title
+ * containing quotes cannot break out of the PowerShell one-liner.
+ */
+export async function focusWindow(titleIncludes: string): Promise<void> {
+  if (!titleIncludes) return;
+  const env = { ...process.env, CAMERAMAN_FOCUS_TITLE: titleIncludes };
+  try {
+    if (PLATFORM === "linux") {
+      await run("xdotool", ["search", "--name", titleIncludes, "windowactivate", "--sync"]);
+    } else if (PLATFORM === "darwin") {
+      await run(
+        "osascript",
+        [
+          "-e",
+          'tell application "System Events" to tell (first process whose name contains ' +
+            '(system attribute "CAMERAMAN_FOCUS_TITLE")) to set frontmost to true',
+        ],
+        { env },
+      );
+    } else {
+      await run(
+        "powershell",
+        [
+          "-NoProfile",
+          "-Command",
+          `${WIN_FOCUS_HELPER}; $t = $env:CAMERAMAN_FOCUS_TITLE; ` +
+            `$p = Get-Process | Where-Object { $_.MainWindowTitle -like "*$t*" } | Select-Object -First 1; ` +
+            `if ($p) { Set-RealForeground($p.MainWindowHandle) }`,
+        ],
+        { env },
+      );
+    }
+  } catch {
+    // Best-effort: no window-focus tool, or no window matched yet (still
+    // loading). Not fatal — the click below still has a chance if the
+    // window happened to already be frontmost.
+  }
+}
+
 async function moveTo(point: Point): Promise<void> {
   const x = Math.round(point.x);
   const y = Math.round(point.y);
